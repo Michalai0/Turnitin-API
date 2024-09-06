@@ -6,7 +6,7 @@ import re
 import io
 
 __LOGIN_URL = "https://www.turnitin.com/login_page.asp?lang=en_us"
-__HOMEPAGE = "https://www.turnitin.com/s_class_portfolio.asp"
+__HOMEPAGE = "https://www.turnitin.com/s_home.asp"
 __DOWNLOAD_URL = "https://www.turnitin.com/paper_download.asp"
 __SUBMIT_URL = "https://www.turnitin.com/t_submit.asp"
 __CONFIRM_URL = "https://www.turnitin.com/submit_confirm.asp"
@@ -45,9 +45,12 @@ def getClasses(cookies):
 
 
 def getAssignments(url, cookies):
+    print(cookies)
+    print(url)
     s = __newSession()
     __setCookies(s, cookies)
     source = __get(s, url)
+    print(source)
     table = __getAssignmentTable(source)
     return [
         {
@@ -178,7 +181,7 @@ def __parseDashboard(source):
         e = classes[i].find("a")
         classes[i] = {
             "title": e["title"],
-            "url": f"https://www.turnitin.com/{e['href']}",
+            "url": f"https://www.turnitin.com{e['href']}",
         }
     return classes
 
