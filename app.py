@@ -37,35 +37,48 @@ def getAssignments():
     return jsonify(turnitin.getAssignments(data["course"]["url"], data["auth"]))
 
 
-@app.route("/download", methods=["POST"])
-def getDownload():
-    data = request.get_json()
-    fileBytes = turnitin.getDownload(
-        data["auth"],
-        data["assignment"]["oid"],
-        data["assignment"]["title"],
-        data["pdf"],
+@app.route("/file_upload", methods=["POST"])
+def file_upload():
+    auth_str = request.form.get("auth", "{}")
+    ass_id_str = request.form.get("ass_id", "{}")
+    user_id_str = request.form.get("user_id", "{}")
+    print(request.form)
+
+    # Extract the actual values
+    auth = json.loads(auth_str.split(": ", 1)[1].strip())
+    ass_id = json.loads(ass_id_str.split(": ", 1)[1].strip())
+    user_id = json.loads(user_id_str.split(": ", 1)[1].strip())
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    file_data = turnitin.file_upload(
+        auth,
+        ass_id,
+        user_id,
+        file
     )
-    return fileBytes
+
+    return jsonify(file_data)
 
 
 @app.route("/submit", methods=["POST"])
-def uploadFile():
-    data = request.form
-    # use as interactive shell to debug data
-    # while (uin := input('>>> ')) != 'q':
-    #     try:
-    #         print(uin, '=')
-    #         print(repr(eval(uin)))
-    #     except:
-    #         pass
+def submit():
+    data = request.get_json()
+    cookies = data["auth"]
+    file_upload_id = data["file_upload_id"]
+    ass_id = data["ass_id"]
+    user_id = data["user_id"]
     return turnitin.submit(
-        json.loads(data["auth"]),
-        json.loads(data["assignment"])["aid"],
-        data["title"],
-        data["filename"],
-        request.files["userfile"].stream,
-        "https://www.turnitin.com/" + json.loads(data["assignment"])["submission"]
+        cookies,
+        file_upload_id,
+        ass_id,
+        user_id,
     )
 
 
@@ -75,4 +88,4 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=(not "gunicorn" in os.environ.get("SERVER_SOFTWARE", "")))
+    app.run(debug=(not "gunicorn" in os.environ.get("SERVER_SOFTWARE", "")), port=10086)

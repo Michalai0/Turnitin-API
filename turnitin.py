@@ -1,3 +1,5 @@
+import json
+
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -44,130 +46,82 @@ def getClasses(cookies):
     return classes
 
 
+def __getUserId(source):
+    soup = BeautifulSoup(source, 'html.parser')
+    script = soup.find('script', text=re.compile('globalContextObject'))
+
+    if script:
+        match = re.search(r'"userId":\s*"trn:user:us:tfs::(\d+)"', script.string)
+        if match:
+            return match.group(1)
+
+    return None
+    pass
+
+
 def getAssignments(url, cookies):
-    print(cookies)
-    print(url)
     s = __newSession()
     __setCookies(s, cookies)
     source = __get(s, url)
-    print(source)
+    user_id = __getUserId(source)
     table = __getAssignmentTable(source)
     return [
         {
             "title": __getAssignmentTitle(assignment),
-            "info": __getAssignmentInfo(assignment),
+            "type": __getAssignmentType(assignment),
             "dates": __getAssignmentDate(assignment),
             "submission": __getSubmissionLink(assignment),
-            "aid": __getAid(assignment),
-            "oid": __getOid(__getMenu(assignment)),
-            "file": __getFileName(__getMenu(assignment)),
+            "user_id": user_id,
+            "ass_id": __getAssignmentId(assignment)
         }
         for assignment in table
     ]
 
 
-def getDownload(cookies, oid, filename, pdf):
-    s = __newSession()
-    __setCookies(s, cookies)
-    query = {"oid": oid, "fn": filename, "type": "paper", "p": int(pdf)}
-    # print(f"[DEBUG] Ah shit, here we go again")
-    r = s.get(__DOWNLOAD_URL, params=query)
-    # print(f"[DEBUG] Status code of {r.status_code}")
-    return r.content
+def file_upload(cookies, ass_id, user_id, file):
+    url = f"https://www.turnitin.com/api/lti/1p0/redirect/upload_submission/{ass_id}/{user_id}"
+    cookie_string = '; '.join([f"{key}={value}" for key, value in cookies.items()])
+
+
+    file_name = file.filename
+
+    payload = {
+        'submission_title': file_name,
+        'submission_filename': file_name
+    }
+
+    files = {
+        'fileupload': (file_name, file, 'application/pdf')
+    }
+
+    headers = {
+        'Cookie': cookie_string,
+        'User-Agent': 'Apifox/1.0.0 (https://apifox.com)'
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload, files=files)
+
+    return json.loads(response.text)
 
 
 def submit(
     cookies,
-    aid,
-    submission_title,
-    filename,
-    userfile,
-    referrer,
+    file_upload_id,
+    ass_id,
+    user_id,
 ):
-    s = __newSession()
-    __setCookies(s, cookies)
+    cookie_string = '; '.join([f"{key}={value}" for key, value in cookies.items()])
+    url = f"https://www.turnitin.com/api/lti/1p0/redirect/upload_save_request/{file_upload_id}/{ass_id}?lang=en_us&author_id={user_id}&placeholder=0"
 
-    r = s.get(referrer)
-    author_first, author_last = __getAuthorName(r.text)
-
-    file_to_mime = {
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "pdf": "application/pdf",
-        "csv": "text/csv",
-        "xls": "application/vnd.ms-excel",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "ppt": "application/vnd.ms-powerpoint",
-        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "html": "text/html",
-        "txt": "text/plain",
-        "rtf": "application/rtf",
-        "odt": "application/vnd.oasis.opendocument.text"
+    payload = {}
+    headers = {
+        'Cookie': cookie_string,
+        'User-Agent': 'Apifox/1.0.0 (https://apifox.com)'
     }
 
-    try:
-        fileending = re.findall(r"\.(.+)$", filename)[0]
-    except IndexError:
-        return "Please submit a valid filename with filetype"
+    response = requests.request("POST", url, headers=headers, data=payload)
 
-    mimetype = file_to_mime.get(fileending, "application/octet-stream")
-
-    query = {"aid": aid, "session-id": cookies["session-id"], "lang": "en_us"}
-    form_data = dict(
-        async_request=1,
-        author_first=author_first,
-        author_last=author_last,
-        title=submission_title,
-        filename=filename
-    )
-    files = {
-        "userfile": (filename, userfile, mimetype),
-        "Content-Disposition":  f"form-data; name=\"file\"; filename=\"{filename}\"",
-        "Content-Type": mimetype
-    }
-
-    r = s.post(
-        __SUBMIT_URL,
-        data=form_data,
-        files=files,
-        headers={"accept": "application/json"},
-        params=query,
-        cookies=cookies
-    )
-
-    # Request didn't return json
-    if not (r.headers["content-type"] == "application/json" and r.json()["errors"] is None):
-        return "Something went wrong during your submission"
-
-    uuid = r.json()["uuid"]
-    r = None
-
-    # Keep asking for metadata until the document is processed
-    while r is None or time.sleep(1) or not r.json()["status"]:
-        r = s.post(
-            "https://www.turnitin.com/panda/get_submission_metadata.asp",
-            params={
-                "session-id": cookies["session-id"],
-                "lang": "en_us",
-                "skip_ready_check": 0,
-                "uuid": uuid,
-            },
-        )
-
-    metadata = r.json()
-    session = cookies["session-id"]
-
-    # Send the confirmation request
-    r = s.post(
-        (
-            f"{__CONFIRM_URL}?lang=en_us&sessionid={session}&"
-            f"data-state=confirm&uuid={uuid}"
-        )
-    )
-
-    if r.text == "null":
-        return "Something went wrong with confirmation"
-
-    return metadata
+    return json.loads(response.text)
 
 
 def __newSession():
@@ -211,36 +165,55 @@ def __setCookies(s, cookies):
 
 
 def __getAssignmentTitle(e):
-    return e.find("td", {"class": "title"}).find("div").text
+    title_td = e.find("td", {"class": "title-column"})
+    if title_td:
+        title_div = title_td.find("div", {"class": "ellipsis"})
+        if title_div:
+            return title_div.text.strip()
+    return "Title not found"
 
 
-def __getAssignmentInfo(e):
-    info = e.find("td", {"class": "info"}).find("button").find("div").text
-    info = re.sub(r"\s\s+", " ", info)
-    info = info.replace("\n", " ")
-    info = info.replace(" Assignment Instructions ", "", 1)
-    info = info[:-1]
-    return info
+def __getAssignmentType(e):
+    type_column = e.find("td", {"class": "type-column"})
+    if type_column:
+        type_label = type_column.find("span", {"class": "type-label"})
+        if type_label:
+            return type_label.text.strip()
+    return "Type not found"
 
 
-def __convertDate(raw):
-    date = raw.find("div", {"class": "date"}).text
-    time = raw.find("div", {"class": "time"}).text
-    dateObject = datetime.strptime(date + " " + time, "%d-%b-%Y %I:%M%p")
-    return dateObject.strftime("%m/%d/%Y %H:%M:%S")
-
+def __convertDate(epoch):
+    if epoch is not None:
+        return datetime.fromtimestamp(int(epoch)).strftime('%Y-%m-%d %H:%M:%S')
+    return None
 
 def __getAssignmentDate(e):
-    raw_dates = e.find_all("td")[2].find("div").find_all("div", {"class": "tooltip"})
-    return {
-        "start": __convertDate(raw_dates[0]),
-        "due": __convertDate(raw_dates[1]),
-        "post": __convertDate(raw_dates[2]),
-    }
+    dates_column = e.find("td", {"class": "dates-column student-dates-cell"})
+    if dates_column:
+        date_rows = dates_column.find("table", {"class": "student-dates-table"}).find_all("tr")
+        return {
+            "start": __convertDate(date_rows[0].get("data-date-epoch")),
+            "due": __convertDate(date_rows[1].get("data-date-epoch")),
+            "post": __convertDate(date_rows[2].get("data-date-epoch"))
+        }
+    return {"start": None, "due": None, "post": None}
 
 
 def __getSubmissionLink(e):
-    return e.find("td", {"class": "action-buttons"}).find("a")["href"]
+    open_column = e.find("td", {"class": "open-column"})
+    if open_column:
+        open_link = open_column.find("a", {"class": "btn btn-primary btn-open"})
+        if open_link:
+            return open_link['href']
+    return "Link not found"
+
+def __getAssignmentId(e):
+    open_column = e.find("td", {"class": "open-column"})
+    if open_column:
+        open_link = open_column.find("a", {"class": "btn btn-primary btn-open"})
+        if open_link:
+            return re.search("(\d+)", open_link['href']).group(1)
+    return "ID not found"
 
 
 def __getAid(e):
@@ -286,7 +259,7 @@ def __getMenu(e):
 
 def __getAssignmentTable(html):
     soup = BeautifulSoup(html, "html.parser")
-    return soup.find_all("tr", {"class": ("Paper", "Revision")})
+    return soup.find_all("tr", {"class": ("Paper", "Revision","assignment-row")})
 
 def __getAuthorName(html):
     soup = BeautifulSoup(html, "html.parser")
