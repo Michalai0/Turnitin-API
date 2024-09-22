@@ -1,5 +1,5 @@
 import json
-
+import mimetypes
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -78,12 +78,24 @@ def getAssignments(url, cookies):
     ]
 
 
-def file_upload(cookies, ass_id, user_id, file):
+def file_upload(cookies, ass_id, user_id, file_url):
+    mimetypes.init()
     url = f"https://www.turnitin.com/api/lti/1p0/redirect/upload_submission/{ass_id}/{user_id}"
     cookie_string = '; '.join([f"{key}={value}" for key, value in cookies.items()])
+    response = requests.get(file_url)
+    file = io.BytesIO(response.content)
+    print(len(file.getvalue()))
 
+    file_name = file_url.split('/')[-1]
+    print(file_name)
+    mime_type, _ = mimetypes.guess_type(file_name)
 
-    file_name = file.filename
+    # If the MIME type couldn't be guessed, default to 'application/octet-stream'
+    if mime_type is None:
+        mime_type = 'application/octet-stream'
+
+    print(mime_type)
+
 
     payload = {
         'submission_title': file_name,
@@ -91,7 +103,7 @@ def file_upload(cookies, ass_id, user_id, file):
     }
 
     files = {
-        'fileupload': (file_name, file, 'application/pdf')
+        'fileupload': (file_name, file,mime_type)
     }
 
     headers = {
@@ -111,15 +123,20 @@ def submit(
     user_id,
 ):
     cookie_string = '; '.join([f"{key}={value}" for key, value in cookies.items()])
+    print(cookie_string)
     url = f"https://www.turnitin.com/api/lti/1p0/redirect/upload_save_request/{file_upload_id}/{ass_id}?lang=en_us&author_id={user_id}&placeholder=0"
 
     payload = {}
     headers = {
-        'Cookie': cookie_string,
+        'Cookie': 'legacy-session-id=5f732217ef634942af09d1a081cb0db0;session-id=5f732217ef634942af09d1a081cb0db0',
         'User-Agent': 'Apifox/1.0.0 (https://apifox.com)'
     }
-
+    time.sleep(5)
     response = requests.request("POST", url, headers=headers, data=payload)
+    if json.loads(response.text).get("error") == 'Your submission must contain 20 words or more.':
+        print("Wait for 5 seconds...")
+        time.sleep(5)
+        response = requests.request("POST", url, headers=headers, data=payload)
 
     return json.loads(response.text)
 
